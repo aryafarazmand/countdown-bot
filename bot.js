@@ -218,33 +218,123 @@ bot.on('message', (msg) => {
   }
 });
 
+// ── الارم‌های مهم ─────────────────────────────────────────────────────────────
+// اعداد گرد و مراحل حساس که الارم جدی میفرسته
+const ALERT_DAYS = new Set([30, 21, 14, 10, 7, 5, 3, 2, 1, 0]);
+
+function buildAlertText(ev, left) {
+  const bar = progressBar(left, ev.totalDays);
+
+  if (left === 0) {
+    return (
+      `🚨🚨🚨 *هشدار فوری* 🚨🚨🚨\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `⛔️ *${ev.name}*\n` +
+      `امروز آخرین روزه\\!\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `${bar}\n` +
+      `وقت تموم شد\\! 🔴`
+    );
+  }
+  if (left === 1) {
+    return (
+      `🚨🚨🚨 *هشدار فوری* 🚨🚨🚨\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `⚠️ *${ev.name}*\n` +
+      `فقط *۱ روز* مونده\\!\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `${bar}\n` +
+      `فردا تموم میشه\\! ⛔️`
+    );
+  }
+  if (left <= 3) {
+    return (
+      `🔴🔴🔴 *هشدار جدی* 🔴🔴🔴\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `⚠️ *${ev.name}*\n` +
+      `فقط *${left} روز* مونده\\!\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `${bar}`
+    );
+  }
+  if (left <= 7) {
+    return (
+      `🟠🟠 *یادآوری مهم* 🟠🟠\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `📢 *${ev.name}*\n` +
+      `*${left} روز* مانده\\!\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `${bar}`
+    );
+  }
+  return (
+    `🔔 *یادآوری* 🔔\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `📌 *${ev.name}*\n` +
+    `*${left} روز* مانده\\!\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `${bar}`
+  );
+}
+
+// ── وقتی کاربر وارد تلگرام میشه (هر پیامی میفرسته) ──────────────────────────
+// lastLoginAlert[chatId] = 'YYYY-MM-DD' — فقط یه بار در روز الارم بده
+const lastLoginAlert = {};
+
+bot.on('message', (msg) => {
+  const chatId  = msg.chat.id;
+  const today   = todayISO();
+  const list    = events[chatId];
+
+  // اگه امروز الارم لاگین نداده و رویداد داره، الارم بفرست
+  if (list && list.length > 0 && lastLoginAlert[chatId] !== today) {
+    lastLoginAlert[chatId] = today;
+    // کمی تاخیر تا اول پیام اصلی پردازش بشه
+    setTimeout(() => {
+      list.forEach(ev => {
+        const left = daysLeft(ev.startDate, ev.totalDays);
+        const alertText = buildAlertText(ev, left);
+        bot.sendMessage(chatId, alertText, { parse_mode: 'MarkdownV2' })
+          .catch(() => {
+            // اگه MarkdownV2 خطا داد، بدون فرمت بفرست
+            bot.sendMessage(chatId,
+              `🔔 ${ev.name} — فقط ${left} روز مانده!`
+            ).catch(() => {});
+          });
+      });
+    }, 800);
+  }
+});
+
 // ── آپدیت روزانه ساعت ۸ صبح ─────────────────────────────────────────────────
 cron.schedule('0 8 * * *', () => {
   Object.entries(events).forEach(([chatId, list]) => {
     if (!list || list.length === 0) return;
     list.forEach(ev => {
-      const left = daysLeft(ev.startDate, ev.totalDays);
+      const left    = daysLeft(ev.startDate, ev.totalDays);
       const pinText = buildPinText(ev);
 
-      // ارسال پیام جدید و پین کردن
+      // آپدیت پین
       bot.sendMessage(chatId, pinText, { parse_mode: 'Markdown' })
         .then(sentMsg => {
-          // پین پیام جدید
           bot.pinChatMessage(chatId, sentMsg.message_id).catch(() => {});
-          // حذف پین قبلی
           if (ev.pinMsgId && ev.pinMsgId !== sentMsg.message_id) {
             bot.deleteMessage(chatId, ev.pinMsgId).catch(() => {});
           }
           ev.pinMsgId = sentMsg.message_id;
-
-          // یادآوری
-          if (left === 0) {
-            bot.sendMessage(chatId, `🎉 *${ev.name}* امروز به پایان رسید!`, { parse_mode: 'Markdown' });
-          } else {
-            bot.sendMessage(chatId, `🔔 *${ev.name}* — *${left}* روز مانده`, { parse_mode: 'Markdown' });
-          }
         })
         .catch(() => {});
+
+      // الارم جدی فقط برای روزهای خاص
+      if (ALERT_DAYS.has(left)) {
+        const alertText = buildAlertText(ev, left);
+        bot.sendMessage(chatId, alertText, { parse_mode: 'MarkdownV2' })
+          .catch(() => {
+            bot.sendMessage(chatId,
+              `🔔 ${ev.name} — فقط ${left} روز مانده!`
+            ).catch(() => {});
+          });
+      }
     });
   });
 }, { timezone: 'Asia/Tehran' });
